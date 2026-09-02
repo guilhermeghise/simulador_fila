@@ -1,9 +1,3 @@
-"""Simulacao por eventos discretos de filas G/G/c/5.
-
-O programa usa o Metodo Congruente Linear para gerar todos os valores
-pseudoaleatorios usados nos intervalos de chegada e de atendimento.
-"""
-
 import heapq
 
 
@@ -11,7 +5,6 @@ import heapq
 A = 1664525
 C = 1013904223
 M = 2**32
-# Mesmos parametros usados pelo grupo na atividade do Modulo 2.
 SEMENTE = 123456789
 LIMITE_ALEATORIOS = 100000
 
