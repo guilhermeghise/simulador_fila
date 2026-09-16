@@ -1,347 +1,281 @@
+import argparse
 import heapq
+import json
 
 
-# Parametros do Metodo Congruente Linear
-A = 1664525
-C = 1013904223
-M = 2**32
-SEMENTE = 123456789
-LIMITE_ALEATORIOS = 100000
+class Simulador:
+    def __init__(self, configuracao):
+        validar_configuracao(configuracao)
 
+        gerador = configuracao["gerador"]
+        self.a = gerador["a"]
+        self.c = gerador["c"]
+        self.m = gerador["m"]
+        self.anterior = gerador["semente"]
+        self.limite_aleatorios = configuracao["limite_aleatorios"]
+        self.aleatorios_usados = 0
 
-# Configuracao da chegada externa
-CHEGADA_MIN = 1.0
-CHEGADA_MAX = 5.0
-PRIMEIRA_CHEGADA = 2.5
+        self.filas = configuracao["filas"]
+        self.populacoes = [0] * len(self.filas)
+        self.perdas = [0] * len(self.filas)
+        self.tempos = [
+            [0.0] * (fila["capacidade"] + 1)
+            for fila in self.filas
+        ]
 
+        self.tempo_global = 0.0
+        self.eventos = []
+        self.ordem_evento = 0
 
-# Fila 1 - G/G/2/3
-FILA1_SERVIDORES = 2
-FILA1_CAPACIDADE = 3
-FILA1_ATENDIMENTO_MIN = 4.0
-FILA1_ATENDIMENTO_MAX = 5.0
+    def proximo_aleatorio(self):
+        if self.aleatorios_usados >= self.limite_aleatorios:
+            return None
 
+        self.anterior = (self.a * self.anterior + self.c) % self.m
+        self.aleatorios_usados += 1
+        return self.anterior / self.m
 
-# Fila 2 - G/G/1/5
-FILA2_SERVIDORES = 1
-FILA2_CAPACIDADE = 5
-FILA2_ATENDIMENTO_MIN = 1.0
-FILA2_ATENDIMENTO_MAX = 3.0
+    def sortear_intervalo(self, intervalo):
+        aleatorio = self.proximo_aleatorio()
+        if aleatorio is None:
+            return None
+        return intervalo[0] + (intervalo[1] - intervalo[0]) * aleatorio
 
+    def agendar(self, tipo, fila, tempo):
+        prioridade = 0 if tipo == "SAIDA" else 1
+        heapq.heappush(
+            self.eventos,
+            (tempo, prioridade, self.ordem_evento, tipo, fila),
+        )
+        self.ordem_evento += 1
 
-# Variaveis da simulacao
-anterior = SEMENTE
-aleatorios_usados = 0
-tempo_global = 0.0
+    def iniciar_atendimento(self, fila):
+        intervalo = self.sortear_intervalo(
+            self.filas[fila]["atendimento"]
+        )
+        if intervalo is not None:
+            self.agendar("SAIDA", fila, self.tempo_global + intervalo)
 
-populacao_fila1 = 0
-populacao_fila2 = 0
+    def entrar(self, fila):
+        configuracao = self.filas[fila]
+        if self.populacoes[fila] >= configuracao["capacidade"]:
+            self.perdas[fila] += 1
+            return
 
-perdas_fila1 = 0
-perdas_fila2 = 0
+        self.populacoes[fila] += 1
+        if self.populacoes[fila] <= configuracao["servidores"]:
+            self.iniciar_atendimento(fila)
 
-tempos_fila1 = [0.0] * (FILA1_CAPACIDADE + 1)
-tempos_fila2 = [0.0] * (FILA2_CAPACIDADE + 1)
+    def chegada_externa(self, fila):
+        self.entrar(fila)
 
-escalonador = []
-ordem_evento = 0
+        intervalo = self.sortear_intervalo(
+            self.filas[fila]["chegada_externa"]["intervalo"]
+        )
+        if intervalo is not None:
+            self.agendar("CHEGADA", fila, self.tempo_global + intervalo)
 
+    def escolher_destino(self, fila):
+        rotas = self.filas[fila].get("roteamento", [])
+        if not rotas:
+            return None
 
-def NextRandom():
-    """Retorna o proximo valor pseudoaleatorio normalizado em [0, 1)."""
-    global anterior, aleatorios_usados
+        if len(rotas) == 1 and rotas[0]["probabilidade"] == 1:
+            return rotas[0]["destino"]
 
-    if aleatorios_usados >= LIMITE_ALEATORIOS:
+        aleatorio = self.proximo_aleatorio()
+        if aleatorio is None:
+            return None
+
+        acumulada = 0.0
+        for rota in rotas:
+            acumulada += rota["probabilidade"]
+            if aleatorio < acumulada:
+                return rota["destino"]
         return None
 
-    anterior = (A * anterior + C) % M
-    aleatorios_usados += 1
+    def saida(self, fila):
+        self.populacoes[fila] -= 1
+        if self.populacoes[fila] >= self.filas[fila]["servidores"]:
+            self.iniciar_atendimento(fila)
 
-    return anterior / M
+        destino = self.escolher_destino(fila)
+        if destino is not None:
+            self.entrar(destino)
 
+    def acumular_tempo(self, novo_tempo):
+        intervalo = novo_tempo - self.tempo_global
+        for fila, populacao in enumerate(self.populacoes):
+            self.tempos[fila][populacao] += intervalo
+        self.tempo_global = novo_tempo
 
-def sortear_intervalo(limite_inferior, limite_superior):
-    """Transforma um numero de [0, 1) em um intervalo uniforme."""
-    u = NextRandom()
-
-    if u is None:
-        return None
-
-    return limite_inferior + (
-        limite_superior - limite_inferior
-    ) * u
-
-
-def agendar_evento(tipo, tempo):
-    """Insere um evento no escalonador."""
-    global ordem_evento
-
-    # Em caso de empate:
-    # SAIDA antes de PASSAGEM e PASSAGEM antes de CHEGADA
-    prioridades = {
-        "SAIDA": 0,
-        "PASSAGEM": 1,
-        "CHEGADA": 2
-    }
-
-    heapq.heappush(
-        escalonador,
-        (
-            tempo,
-            prioridades[tipo],
-            ordem_evento,
-            tipo
-        )
-    )
-
-    ordem_evento += 1
-
-
-def NextEvent():
-    """Retira o evento com menor tempo do escalonador."""
-    return heapq.heappop(escalonador)
-
-
-def CHEGADA():
-    """
-    Trata a chegada externa de um cliente na Fila 1.
-    """
-    global populacao_fila1, perdas_fila1
-
-    if populacao_fila1 < FILA1_CAPACIDADE:
-
-        populacao_fila1 += 1
-
-        # Se existe servidor livre, inicia atendimento imediatamente.
-        if populacao_fila1 <= FILA1_SERVIDORES:
-
-            intervalo = sortear_intervalo(
-                FILA1_ATENDIMENTO_MIN,
-                FILA1_ATENDIMENTO_MAX
-            )
-
-            if intervalo is not None:
-                agendar_evento(
-                    "PASSAGEM",
-                    tempo_global + intervalo
+    def simular(self):
+        for indice, fila in enumerate(self.filas):
+            chegada = fila.get("chegada_externa")
+            if chegada:
+                self.agendar(
+                    "CHEGADA",
+                    indice,
+                    chegada["primeira_chegada"],
                 )
 
-    else:
-        perdas_fila1 += 1
+        while (
+            self.aleatorios_usados < self.limite_aleatorios
+            and self.eventos
+        ):
+            tempo, _, _, tipo, fila = heapq.heappop(self.eventos)
+            self.acumular_tempo(tempo)
 
-    # Agenda a proxima chegada externa.
-    intervalo = sortear_intervalo(
-        CHEGADA_MIN,
-        CHEGADA_MAX
-    )
-
-    if intervalo is not None:
-        agendar_evento(
-            "CHEGADA",
-            tempo_global + intervalo
-        )
+            if tipo == "CHEGADA":
+                self.chegada_externa(fila)
+            else:
+                self.saida(fila)
 
 
-def PASSAGEM():
-    """
-    Trata a saida de um cliente da Fila 1 e sua chegada
-    na Fila 2.
-    """
-    global populacao_fila1
-    global populacao_fila2
-    global perdas_fila2
+def validar_intervalo(intervalo, nome):
+    if (
+        not isinstance(intervalo, list)
+        or len(intervalo) != 2
+        or intervalo[0] < 0
+        or intervalo[0] > intervalo[1]
+    ):
+        raise ValueError(f"{nome} deve ser [minimo, maximo]")
 
-    # Cliente sai da Fila 1
-    populacao_fila1 -= 1
 
-    # Se ainda existe cliente esperando na Fila 1,
-    # inicia um novo atendimento.
-    if populacao_fila1 >= FILA1_SERVIDORES:
+def validar_configuracao(configuracao):
+    filas = configuracao.get("filas", [])
+    gerador = configuracao.get("gerador", {})
 
-        intervalo = sortear_intervalo(
-            FILA1_ATENDIMENTO_MIN,
-            FILA1_ATENDIMENTO_MAX
-        )
+    if not filas:
+        raise ValueError("a configuracao deve possuir ao menos uma fila")
+    if configuracao.get("limite_aleatorios", 0) <= 0:
+        raise ValueError("limite_aleatorios deve ser positivo")
+    if not all(gerador.get(chave, 0) > 0 for chave in ("a", "c", "m")):
+        raise ValueError("gerador deve informar a, c e m positivos")
+    if "semente" not in gerador:
+        raise ValueError("gerador deve informar a semente")
 
-        if intervalo is not None:
-            agendar_evento(
-                "PASSAGEM",
-                tempo_global + intervalo
+    for indice, fila in enumerate(filas):
+        servidores = fila.get("servidores", 0)
+        capacidade = fila.get("capacidade", 0)
+        if servidores <= 0 or capacidade < servidores:
+            raise ValueError(
+                f"fila {indice}: capacidade deve ser >= servidores > 0"
             )
 
-    # Cliente tenta entrar na Fila 2.
-    if populacao_fila2 < FILA2_CAPACIDADE:
+        validar_intervalo(fila.get("atendimento"), f"fila {indice}.atendimento")
 
-        populacao_fila2 += 1
-
-        # Se o servidor da Fila 2 estiver livre,
-        # inicia o atendimento.
-        if populacao_fila2 <= FILA2_SERVIDORES:
-
-            intervalo = sortear_intervalo(
-                FILA2_ATENDIMENTO_MIN,
-                FILA2_ATENDIMENTO_MAX
+        chegada = fila.get("chegada_externa")
+        if chegada:
+            validar_intervalo(
+                chegada.get("intervalo"),
+                f"fila {indice}.chegada_externa.intervalo",
             )
-
-            if intervalo is not None:
-                agendar_evento(
-                    "SAIDA",
-                    tempo_global + intervalo
+            if chegada.get("primeira_chegada", -1) < 0:
+                raise ValueError(
+                    f"fila {indice}: primeira_chegada deve ser >= 0"
                 )
 
-    else:
-        perdas_fila2 += 1
+        soma = 0.0
+        for rota in fila.get("roteamento", []):
+            destino = rota.get("destino")
+            probabilidade = rota.get("probabilidade", -1)
+            if not isinstance(destino, int) or not 0 <= destino < len(filas):
+                raise ValueError(f"fila {indice}: destino de rota invalido")
+            if not 0 <= probabilidade <= 1:
+                raise ValueError(f"fila {indice}: probabilidade invalida")
+            soma += probabilidade
 
-
-def SAIDA():
-    """
-    Trata a saida definitiva de um cliente da Fila 2.
-    """
-    global populacao_fila2
-
-    populacao_fila2 -= 1
-
-    # Se ainda existe cliente esperando,
-    # inicia o atendimento do proximo.
-    if populacao_fila2 >= FILA2_SERVIDORES:
-
-        intervalo = sortear_intervalo(
-            FILA2_ATENDIMENTO_MIN,
-            FILA2_ATENDIMENTO_MAX
-        )
-
-        if intervalo is not None:
-            agendar_evento(
-                "SAIDA",
-                tempo_global + intervalo
+        if soma > 1.0 + 1e-12:
+            raise ValueError(
+                f"fila {indice}: probabilidades de roteamento excedem 1"
             )
 
 
-def acumular_tempo(novo_tempo):
-    """
-    Acumula simultaneamente o tempo do estado atual
-    das duas filas.
-    """
-    global tempo_global
+def imprimir_resultados(simulador):
+    print(f"Aleatorios utilizados: {simulador.aleatorios_usados}")
+    print(f"Tempo global: {simulador.tempo_global:.6f}\n")
 
-    intervalo = novo_tempo - tempo_global
-
-    tempos_fila1[populacao_fila1] += intervalo
-    tempos_fila2[populacao_fila2] += intervalo
-
-    tempo_global = novo_tempo
-
-
-def simular():
-    """
-    Executa a simulacao ate utilizar 100.000 numeros
-    pseudoaleatorios.
-    """
-
-    # Primeira chegada determinada pelo enunciado.
-    agendar_evento(
-        "CHEGADA",
-        PRIMEIRA_CHEGADA
-    )
-
-    while aleatorios_usados < LIMITE_ALEATORIOS and escalonador:
-
-        tempo_evento, _, _, tipo = NextEvent()
-
-        # O tempo deve ser acumulado nas DUAS filas.
-        acumular_tempo(tempo_evento)
-
-        if tipo == "CHEGADA":
-            CHEGADA()
-
-        elif tipo == "PASSAGEM":
-            PASSAGEM()
-
-        elif tipo == "SAIDA":
-            SAIDA()
-
-
-def imprimir_fila(
-    numero,
-    servidores,
-    capacidade,
-    tempos,
-    perdas
-):
-    print(
-        f"Fila {numero} - "
-        f"G/G/{servidores}/{capacidade}"
-    )
-
-    print(f"Clientes perdidos: {perdas}")
-    print("Estado | Tempo acumulado | Probabilidade")
-
-    for estado in range(capacidade + 1):
-
-        tempo = tempos[estado]
-        probabilidade = tempo / tempo_global
-
+    for indice, fila in enumerate(simulador.filas):
         print(
-            f"{estado:>6} | "
-            f"{tempo:>15.6f} | "
-            f"{probabilidade:>11.6%}"
+            f"{fila['nome']} - G/G/{fila['servidores']}/"
+            f"{fila['capacidade']}"
         )
+        print(f"Clientes perdidos: {simulador.perdas[indice]}")
+        print("Estado | Tempo acumulado | Probabilidade")
 
-    print()
+        for estado, tempo in enumerate(simulador.tempos[indice]):
+            probabilidade = tempo / simulador.tempo_global
+            print(
+                f"{estado:>6} | {tempo:>15.6f} | "
+                f"{probabilidade:>11.6%}"
+            )
+        print()
+
+
+def verificar():
+    configuracao = {
+        "gerador": {"a": 1, "c": 1, "m": 16, "semente": 1},
+        "limite_aleatorios": 20,
+        "filas": [
+            {
+                "nome": "Origem",
+                "servidores": 1,
+                "capacidade": 2,
+                "atendimento": [1, 1],
+                "chegada_externa": {
+                    "intervalo": [2, 2],
+                    "primeira_chegada": 0,
+                },
+                "roteamento": [{"destino": 1, "probabilidade": 1}],
+            },
+            {
+                "nome": "Destino",
+                "servidores": 1,
+                "capacidade": 2,
+                "atendimento": [1, 1],
+                "roteamento": [],
+            },
+        ],
+    }
+    simulador = Simulador(configuracao)
+    simulador.simular()
+    assert simulador.aleatorios_usados == 20
+    assert simulador.perdas == [0, 0]
+    assert all(
+        abs(sum(tempos) - simulador.tempo_global) < 1e-9
+        for tempos in simulador.tempos
+    )
+    print("Verificacao concluida com sucesso.")
 
 
 def main():
-
-    print("Parametros do gerador congruente linear")
-    print(
-        f"a = {A}; c = {C}; M = {M}; "
-        f"semente = {SEMENTE}"
+    parser = argparse.ArgumentParser(
+        description="Simulador de uma rede de filas G/G/c/K"
     )
-
-    print()
-
-    print(
-        f"Chegadas externas: "
-        f"[{CHEGADA_MIN}, {CHEGADA_MAX})"
+    parser.add_argument(
+        "configuracao",
+        nargs="?",
+        default="config.json",
+        help="arquivo JSON da rede (padrao: config.json)",
     )
-
-    print(
-        f"Fila 1: G/G/{FILA1_SERVIDORES}/"
-        f"{FILA1_CAPACIDADE}, atendimento "
-        f"[{FILA1_ATENDIMENTO_MIN}, "
-        f"{FILA1_ATENDIMENTO_MAX})"
+    parser.add_argument(
+        "--verificar",
+        action="store_true",
+        help="executa a verificacao interna",
     )
+    argumentos = parser.parse_args()
 
-    print(
-        f"Fila 2: G/G/{FILA2_SERVIDORES}/"
-        f"{FILA2_CAPACIDADE}, atendimento "
-        f"[{FILA2_ATENDIMENTO_MIN}, "
-        f"{FILA2_ATENDIMENTO_MAX})"
-    )
+    if argumentos.verificar:
+        verificar()
+        return
 
-    print()
+    with open(argumentos.configuracao, encoding="utf-8") as arquivo:
+        configuracao = json.load(arquivo)
 
-    simular()
-
-    print(f"Aleatorios utilizados: {aleatorios_usados}")
-    print(f"Tempo global: {tempo_global:.6f}")
-    print()
-
-    imprimir_fila(
-        1,
-        FILA1_SERVIDORES,
-        FILA1_CAPACIDADE,
-        tempos_fila1,
-        perdas_fila1
-    )
-
-    imprimir_fila(
-        2,
-        FILA2_SERVIDORES,
-        FILA2_CAPACIDADE,
-        tempos_fila2,
-        perdas_fila2
-    )
+    simulador = Simulador(configuracao)
+    simulador.simular()
+    imprimir_resultados(simulador)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,34 @@
+{
+  "gerador": {
+    "a": 1664525,
+    "c": 1013904223,
+    "m": 4294967296,
+    "semente": 123456789
+  },
+  "limite_aleatorios": 100000,
+  "filas": [
+    {
+      "nome": "Fila 1",
+      "servidores": 2,
+      "capacidade": 3,
+      "atendimento": [4.0, 5.0],
+      "chegada_externa": {
+        "intervalo": [1.0, 5.0],
+        "primeira_chegada": 2.5
+      },
+      "roteamento": [
+        {
+          "destino": 1,
+          "probabilidade": 1.0
+        }
+      ]
+    },
+    {
+      "nome": "Fila 2",
+      "servidores": 1,
+      "capacidade": 5,
+      "atendimento": [1.0, 3.0],
+      "roteamento": []
+    }
+  ]
+}
