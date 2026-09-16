@@ -8,23 +8,43 @@ M = 2**32
 SEMENTE = 123456789
 LIMITE_ALEATORIOS = 100000
 
-# Configuracao comum das filas
-CAPACIDADE = 5
-CHEGADA_MIN = 3.0
-CHEGADA_MAX = 5.0
-ATENDIMENTO_MIN = 4.0
-ATENDIMENTO_MAX = 5.0
 
-# Variaveis da simulacao. Elas sao reiniciadas antes de cada cenario.
+# Configuracao da chegada externa
+CHEGADA_MIN = 1.0
+CHEGADA_MAX = 5.0
+PRIMEIRA_CHEGADA = 2.5
+
+
+# Fila 1 - G/G/2/3
+FILA1_SERVIDORES = 2
+FILA1_CAPACIDADE = 3
+FILA1_ATENDIMENTO_MIN = 4.0
+FILA1_ATENDIMENTO_MAX = 5.0
+
+
+# Fila 2 - G/G/1/5
+FILA2_SERVIDORES = 1
+FILA2_CAPACIDADE = 5
+FILA2_ATENDIMENTO_MIN = 1.0
+FILA2_ATENDIMENTO_MAX = 3.0
+
+
+# Variaveis da simulacao
 anterior = SEMENTE
 aleatorios_usados = 0
 tempo_global = 0.0
-populacao = 0
-perdas = 0
-tempos_acumulados = []
+
+populacao_fila1 = 0
+populacao_fila2 = 0
+
+perdas_fila1 = 0
+perdas_fila2 = 0
+
+tempos_fila1 = [0.0] * (FILA1_CAPACIDADE + 1)
+tempos_fila2 = [0.0] * (FILA2_CAPACIDADE + 1)
+
 escalonador = []
 ordem_evento = 0
-numero_servidores = 1
 
 
 def NextRandom():
@@ -36,146 +56,292 @@ def NextRandom():
 
     anterior = (A * anterior + C) % M
     aleatorios_usados += 1
+
     return anterior / M
 
 
 def sortear_intervalo(limite_inferior, limite_superior):
-    """Transforma um numero de [0, 1) em um intervalo uniforme [a, b)."""
+    """Transforma um numero de [0, 1) em um intervalo uniforme."""
     u = NextRandom()
+
     if u is None:
         return None
-    return limite_inferior + (limite_superior - limite_inferior) * u
+
+    return limite_inferior + (
+        limite_superior - limite_inferior
+    ) * u
 
 
 def agendar_evento(tipo, tempo):
-    """Insere um evento no escalonador, que e uma fila de prioridade."""
+    """Insere um evento no escalonador."""
     global ordem_evento
 
-    # Em caso de empate, a saida e tratada antes da chegada.
-    prioridade = 0 if tipo == "SAIDA" else 1
-    heapq.heappush(escalonador, (tempo, prioridade, ordem_evento, tipo))
+    # Em caso de empate:
+    # SAIDA antes de PASSAGEM e PASSAGEM antes de CHEGADA
+    prioridades = {
+        "SAIDA": 0,
+        "PASSAGEM": 1,
+        "CHEGADA": 2
+    }
+
+    heapq.heappush(
+        escalonador,
+        (
+            tempo,
+            prioridades[tipo],
+            ordem_evento,
+            tipo
+        )
+    )
+
     ordem_evento += 1
 
 
 def NextEvent():
-    """Retira do escalonador o evento com o menor tempo."""
+    """Retira o evento com menor tempo do escalonador."""
     return heapq.heappop(escalonador)
 
 
 def CHEGADA():
-    """Trata a chegada de um cliente e agenda eventos futuros."""
-    global populacao, perdas
+    """
+    Trata a chegada externa de um cliente na Fila 1.
+    """
+    global populacao_fila1, perdas_fila1
 
-    cliente_aceito = populacao < CAPACIDADE
+    if populacao_fila1 < FILA1_CAPACIDADE:
 
-    if cliente_aceito:
-        populacao += 1
+        populacao_fila1 += 1
 
-        # Se ha servidor livre, o atendimento comeca imediatamente.
-        if populacao <= numero_servidores:
-            intervalo = sortear_intervalo(ATENDIMENTO_MIN, ATENDIMENTO_MAX)
+        # Se existe servidor livre, inicia atendimento imediatamente.
+        if populacao_fila1 <= FILA1_SERVIDORES:
+
+            intervalo = sortear_intervalo(
+                FILA1_ATENDIMENTO_MIN,
+                FILA1_ATENDIMENTO_MAX
+            )
+
             if intervalo is not None:
-                agendar_evento("SAIDA", tempo_global + intervalo)
-    else:
-        perdas += 1
+                agendar_evento(
+                    "PASSAGEM",
+                    tempo_global + intervalo
+                )
 
-    # A proxima chegada e agendada mesmo quando o cliente atual e perdido.
-    intervalo = sortear_intervalo(CHEGADA_MIN, CHEGADA_MAX)
+    else:
+        perdas_fila1 += 1
+
+    # Agenda a proxima chegada externa.
+    intervalo = sortear_intervalo(
+        CHEGADA_MIN,
+        CHEGADA_MAX
+    )
+
     if intervalo is not None:
-        agendar_evento("CHEGADA", tempo_global + intervalo)
+        agendar_evento(
+            "CHEGADA",
+            tempo_global + intervalo
+        )
+
+
+def PASSAGEM():
+    """
+    Trata a saida de um cliente da Fila 1 e sua chegada
+    na Fila 2.
+    """
+    global populacao_fila1
+    global populacao_fila2
+    global perdas_fila2
+
+    # Cliente sai da Fila 1
+    populacao_fila1 -= 1
+
+    # Se ainda existe cliente esperando na Fila 1,
+    # inicia um novo atendimento.
+    if populacao_fila1 >= FILA1_SERVIDORES:
+
+        intervalo = sortear_intervalo(
+            FILA1_ATENDIMENTO_MIN,
+            FILA1_ATENDIMENTO_MAX
+        )
+
+        if intervalo is not None:
+            agendar_evento(
+                "PASSAGEM",
+                tempo_global + intervalo
+            )
+
+    # Cliente tenta entrar na Fila 2.
+    if populacao_fila2 < FILA2_CAPACIDADE:
+
+        populacao_fila2 += 1
+
+        # Se o servidor da Fila 2 estiver livre,
+        # inicia o atendimento.
+        if populacao_fila2 <= FILA2_SERVIDORES:
+
+            intervalo = sortear_intervalo(
+                FILA2_ATENDIMENTO_MIN,
+                FILA2_ATENDIMENTO_MAX
+            )
+
+            if intervalo is not None:
+                agendar_evento(
+                    "SAIDA",
+                    tempo_global + intervalo
+                )
+
+    else:
+        perdas_fila2 += 1
 
 
 def SAIDA():
-    """Trata uma saida e inicia novo atendimento quando ha espera."""
-    global populacao
+    """
+    Trata a saida definitiva de um cliente da Fila 2.
+    """
+    global populacao_fila2
 
-    populacao -= 1
+    populacao_fila2 -= 1
 
-    # Depois da saida, esta condicao indica que ainda existe cliente
-    # esperando para ocupar o servidor que acabou de ficar livre.
-    if populacao >= numero_servidores:
-        intervalo = sortear_intervalo(ATENDIMENTO_MIN, ATENDIMENTO_MAX)
+    # Se ainda existe cliente esperando,
+    # inicia o atendimento do proximo.
+    if populacao_fila2 >= FILA2_SERVIDORES:
+
+        intervalo = sortear_intervalo(
+            FILA2_ATENDIMENTO_MIN,
+            FILA2_ATENDIMENTO_MAX
+        )
+
         if intervalo is not None:
-            agendar_evento("SAIDA", tempo_global + intervalo)
+            agendar_evento(
+                "SAIDA",
+                tempo_global + intervalo
+            )
 
 
-def inicializar_simulacao(servidores):
-    """Reinicia as variaveis e agenda a primeira chegada no tempo 3,0."""
-    global anterior, aleatorios_usados, tempo_global, populacao, perdas
-    global tempos_acumulados, escalonador, ordem_evento, numero_servidores
-
-    anterior = SEMENTE
-    aleatorios_usados = 0
-    tempo_global = 0.0
-    populacao = 0
-    perdas = 0
-    tempos_acumulados = [0.0] * (CAPACIDADE + 1)
-    escalonador = []
-    ordem_evento = 0
-    numero_servidores = servidores
-
-    agendar_evento("CHEGADA", 3.0)
-
-
-def simular(servidores):
-    """Executa um cenario ate o uso do aleatorio de numero 100.000."""
+def acumular_tempo(novo_tempo):
+    """
+    Acumula simultaneamente o tempo do estado atual
+    das duas filas.
+    """
     global tempo_global
 
-    inicializar_simulacao(servidores)
+    intervalo = novo_tempo - tempo_global
+
+    tempos_fila1[populacao_fila1] += intervalo
+    tempos_fila2[populacao_fila2] += intervalo
+
+    tempo_global = novo_tempo
+
+
+def simular():
+    """
+    Executa a simulacao ate utilizar 100.000 numeros
+    pseudoaleatorios.
+    """
+
+    # Primeira chegada determinada pelo enunciado.
+    agendar_evento(
+        "CHEGADA",
+        PRIMEIRA_CHEGADA
+    )
 
     while aleatorios_usados < LIMITE_ALEATORIOS and escalonador:
+
         tempo_evento, _, _, tipo = NextEvent()
 
-        # O tempo desde o evento anterior pertence ao estado atual da fila.
-        tempos_acumulados[populacao] += tempo_evento - tempo_global
-        tempo_global = tempo_evento
+        # O tempo deve ser acumulado nas DUAS filas.
+        acumular_tempo(tempo_evento)
 
         if tipo == "CHEGADA":
             CHEGADA()
-        else:
+
+        elif tipo == "PASSAGEM":
+            PASSAGEM()
+
+        elif tipo == "SAIDA":
             SAIDA()
 
-    probabilidades = [tempo / tempo_global for tempo in tempos_acumulados]
 
-    return {
-        "servidores": servidores,
-        "tempos": tempos_acumulados.copy(),
-        "probabilidades": probabilidades,
-        "perdas": perdas,
-        "tempo_global": tempo_global,
-        "aleatorios": aleatorios_usados,
-    }
+def imprimir_fila(
+    numero,
+    servidores,
+    capacidade,
+    tempos,
+    perdas
+):
+    print(
+        f"Fila {numero} - "
+        f"G/G/{servidores}/{capacidade}"
+    )
 
-
-def imprimir_resultado(resultado):
-    servidores = resultado["servidores"]
-    print(f"Fila G/G/{servidores}/{CAPACIDADE}")
-    print(f"Aleatorios utilizados: {resultado['aleatorios']}")
-    print(f"Tempo global: {resultado['tempo_global']:.6f}")
-    print(f"Clientes perdidos: {resultado['perdas']}")
+    print(f"Clientes perdidos: {perdas}")
     print("Estado | Tempo acumulado | Probabilidade")
 
-    for estado in range(CAPACIDADE + 1):
-        tempo = resultado["tempos"][estado]
-        probabilidade = resultado["probabilidades"][estado]
-        print(f"{estado:>6} | {tempo:>15.6f} | {probabilidade:>11.6%}")
+    for estado in range(capacidade + 1):
 
-    print(f"Soma das probabilidades: {sum(resultado['probabilidades']):.6%}")
+        tempo = tempos[estado]
+        probabilidade = tempo / tempo_global
+
+        print(
+            f"{estado:>6} | "
+            f"{tempo:>15.6f} | "
+            f"{probabilidade:>11.6%}"
+        )
+
+    print()
 
 
 def main():
+
     print("Parametros do gerador congruente linear")
-    print(f"a = {A}; c = {C}; M = {M}; semente = {SEMENTE}")
-    print(f"Chegadas: [{CHEGADA_MIN}, {CHEGADA_MAX})")
-    print(f"Atendimentos: [{ATENDIMENTO_MIN}, {ATENDIMENTO_MAX})")
+    print(
+        f"a = {A}; c = {C}; M = {M}; "
+        f"semente = {SEMENTE}"
+    )
+
     print()
 
-    resultado_um_servidor = simular(1)
-    imprimir_resultado(resultado_um_servidor)
+    print(
+        f"Chegadas externas: "
+        f"[{CHEGADA_MIN}, {CHEGADA_MAX})"
+    )
+
+    print(
+        f"Fila 1: G/G/{FILA1_SERVIDORES}/"
+        f"{FILA1_CAPACIDADE}, atendimento "
+        f"[{FILA1_ATENDIMENTO_MIN}, "
+        f"{FILA1_ATENDIMENTO_MAX})"
+    )
+
+    print(
+        f"Fila 2: G/G/{FILA2_SERVIDORES}/"
+        f"{FILA2_CAPACIDADE}, atendimento "
+        f"[{FILA2_ATENDIMENTO_MIN}, "
+        f"{FILA2_ATENDIMENTO_MAX})"
+    )
+
     print()
 
-    resultado_dois_servidores = simular(2)
-    imprimir_resultado(resultado_dois_servidores)
+    simular()
+
+    print(f"Aleatorios utilizados: {aleatorios_usados}")
+    print(f"Tempo global: {tempo_global:.6f}")
+    print()
+
+    imprimir_fila(
+        1,
+        FILA1_SERVIDORES,
+        FILA1_CAPACIDADE,
+        tempos_fila1,
+        perdas_fila1
+    )
+
+    imprimir_fila(
+        2,
+        FILA2_SERVIDORES,
+        FILA2_CAPACIDADE,
+        tempos_fila2,
+        perdas_fila2
+    )
 
 
 if __name__ == "__main__":
