@@ -42,7 +42,11 @@ class Simulador:
         return intervalo[0] + (intervalo[1] - intervalo[0]) * aleatorio
 
     def agendar(self, tipo, fila, tempo):
-        prioridade = 0 if tipo == "SAIDA" else 1
+        prioridade = {
+            "SAIDA": 0,
+            "PASSAGEM": 1,
+            "CHEGADA": 2,
+        }[tipo]
         heapq.heappush(
             self.eventos,
             (tempo, prioridade, self.ordem_evento, tipo, fila),
@@ -54,7 +58,12 @@ class Simulador:
             self.filas[fila]["atendimento"]
         )
         if intervalo is not None:
-            self.agendar("SAIDA", fila, self.tempo_global + intervalo)
+            tipo = (
+                "PASSAGEM"
+                if self.filas[fila].get("roteamento")
+                else "SAIDA"
+            )
+            self.agendar(tipo, fila, self.tempo_global + intervalo)
 
     def entrar(self, fila):
         configuracao = self.filas[fila]
@@ -94,14 +103,19 @@ class Simulador:
                 return rota["destino"]
         return None
 
-    def saida(self, fila):
+    def concluir_atendimento(self, fila):
         self.populacoes[fila] -= 1
         if self.populacoes[fila] >= self.filas[fila]["servidores"]:
             self.iniciar_atendimento(fila)
 
+    def passagem(self, fila):
+        self.concluir_atendimento(fila)
         destino = self.escolher_destino(fila)
         if destino is not None:
             self.entrar(destino)
+
+    def saida(self, fila):
+        self.concluir_atendimento(fila)
 
     def acumular_tempo(self, novo_tempo):
         intervalo = novo_tempo - self.tempo_global
@@ -128,6 +142,8 @@ class Simulador:
 
             if tipo == "CHEGADA":
                 self.chegada_externa(fila)
+            elif tipo == "PASSAGEM":
+                self.passagem(fila)
             else:
                 self.saida(fila)
 
