@@ -23,10 +23,21 @@ Para usar outra rede, copie `config.json`, altere as filas e informe o arquivo:
 python3 simulador_fila.py outra_rede.json
 ```
 
+O modelo do trabalho T1 está em `t1.json`:
+
+```bash
+python3 simulador_fila.py t1.json
+```
+
+Nesse arquivo, a Fila 1 não possui capacidade máxima. A Fila 2 encaminha
+30% dos clientes para a Fila 1, 50% para a Fila 3 e 20% para fora da rede.
+A Fila 3 encaminha 70% para a Fila 2 e 30% para fora.
+
 Cada fila aceita `nome`, `servidores`, `capacidade`, intervalo de
 `atendimento`, `chegada_externa` opcional e uma lista de `roteamento`. O campo
 `destino` é o índice da fila na lista, começando em zero. A soma das
 probabilidades pode ser menor que 1; o restante representa a saída da rede.
+Omita `capacidade` para uma fila sem limite de clientes.
 
 Exemplo de roteamento com 70% para a segunda fila e 30% para fora da rede:
 

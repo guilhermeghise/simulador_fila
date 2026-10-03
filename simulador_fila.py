@@ -20,6 +20,8 @@ class Simulador:
         self.perdas = [0] * len(self.filas)
         self.tempos = [
             [0.0] * (fila["capacidade"] + 1)
+            if fila.get("capacidade") is not None
+            else [0.0]
             for fila in self.filas
         ]
 
@@ -67,11 +69,14 @@ class Simulador:
 
     def entrar(self, fila):
         configuracao = self.filas[fila]
-        if self.populacoes[fila] >= configuracao["capacidade"]:
+        capacidade = configuracao.get("capacidade")
+        if capacidade is not None and self.populacoes[fila] >= capacidade:
             self.perdas[fila] += 1
             return
 
         self.populacoes[fila] += 1
+        if self.populacoes[fila] == len(self.tempos[fila]):
+            self.tempos[fila].append(0.0)
         if self.populacoes[fila] <= configuracao["servidores"]:
             self.iniciar_atendimento(fila)
 
@@ -173,10 +178,10 @@ def validar_configuracao(configuracao):
 
     for indice, fila in enumerate(filas):
         servidores = fila.get("servidores", 0)
-        capacidade = fila.get("capacidade", 0)
-        if servidores <= 0 or capacidade < servidores:
+        capacidade = fila.get("capacidade")
+        if servidores <= 0 or (capacidade is not None and capacidade < servidores):
             raise ValueError(
-                f"fila {indice}: capacidade deve ser >= servidores > 0"
+                f"fila {indice}: capacidade deve ser >= servidores > 0, ou omitida"
             )
 
         validar_intervalo(fila.get("atendimento"), f"fila {indice}.atendimento")
@@ -213,9 +218,12 @@ def imprimir_resultados(simulador):
     print(f"Tempo global: {simulador.tempo_global:.6f}\n")
 
     for indice, fila in enumerate(simulador.filas):
+        capacidade = fila.get("capacidade")
+        modelo = f"G/G/{fila['servidores']}"
+        if capacidade is not None:
+            modelo += f"/{capacidade}"
         print(
-            f"{fila['nome']} - G/G/{fila['servidores']}/"
-            f"{fila['capacidade']}"
+            f"{fila['nome']} - {modelo}"
         )
         print(f"Clientes perdidos: {simulador.perdas[indice]}")
         print("Estado | Tempo acumulado | Probabilidade")
@@ -262,6 +270,24 @@ def verificar():
         abs(sum(tempos) - simulador.tempo_global) < 1e-9
         for tempos in simulador.tempos
     )
+
+    configuracao["filas"] = [
+        {
+            "nome": "Sem limite",
+            "servidores": 1,
+            "atendimento": [10, 10],
+            "chegada_externa": {
+                "intervalo": [0.1, 0.1],
+                "primeira_chegada": 0,
+            },
+        }
+    ]
+    simulador = Simulador(configuracao)
+    simulador.simular()
+    assert simulador.aleatorios_usados == 20
+    assert simulador.perdas == [0]
+    assert len(simulador.tempos[0]) > 2
+    assert abs(sum(simulador.tempos[0]) - simulador.tempo_global) < 1e-9
     print("Verificacao concluida com sucesso.")
 
 

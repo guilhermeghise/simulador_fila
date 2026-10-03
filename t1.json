@@ -1,0 +1,43 @@
+{
+  "gerador": {
+    "a": 1664525,
+    "c": 1013904223,
+    "m": 4294967296,
+    "semente": 123456789
+  },
+  "limite_aleatorios": 100000,
+  "filas": [
+    {
+      "nome": "Fila 1",
+      "servidores": 1,
+      "atendimento": [1.0, 2.0],
+      "chegada_externa": {
+        "intervalo": [2.0, 4.0],
+        "primeira_chegada": 2.0
+      },
+      "roteamento": [
+        {"destino": 1, "probabilidade": 0.2},
+        {"destino": 2, "probabilidade": 0.8}
+      ]
+    },
+    {
+      "nome": "Fila 2",
+      "servidores": 2,
+      "capacidade": 5,
+      "atendimento": [4.0, 6.0],
+      "roteamento": [
+        {"destino": 0, "probabilidade": 0.3},
+        {"destino": 2, "probabilidade": 0.5}
+      ]
+    },
+    {
+      "nome": "Fila 3",
+      "servidores": 2,
+      "capacidade": 10,
+      "atendimento": [5.0, 15.0],
+      "roteamento": [
+        {"destino": 1, "probabilidade": 0.7}
+      ]
+    }
+  ]
+}
