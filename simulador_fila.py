@@ -215,7 +215,7 @@ def validar_configuracao(configuracao):
 
 def imprimir_resultados(simulador):
     print(f"Aleatorios utilizados: {simulador.aleatorios_usados}")
-    print(f"Tempo global: {simulador.tempo_global:.6f}\n")
+    print(f"Tempo global: {simulador.tempo_global:.6f} minutos\n")
 
     for indice, fila in enumerate(simulador.filas):
         capacidade = fila.get("capacidade")
@@ -226,7 +226,7 @@ def imprimir_resultados(simulador):
             f"{fila['nome']} - {modelo}"
         )
         print(f"Clientes perdidos: {simulador.perdas[indice]}")
-        print("Estado | Tempo acumulado | Probabilidade")
+        print("Estado | Tempo acumulado (min) | Probabilidade")
 
         for estado, tempo in enumerate(simulador.tempos[indice]):
             probabilidade = tempo / simulador.tempo_global
